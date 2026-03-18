@@ -69,7 +69,7 @@
       ;; is self-contradictory; I will wait until someone complaints -- MF, 22 Nov 2015
       (init-field close-on-stop)
       (init-field record?)
-      (init-field name state register port check-with on-key on-release on-pad on-mouse)
+      (init-field name state register port messenger check-with on-key on-release on-pad on-mouse)
       (init on-receive on-draw stop-when)
 
       ;; -----------------------------------------------------------------------
@@ -102,14 +102,14 @@
               in
               (lambda (in) 
                 (define dis (text "the universe disappeared" 11 'red))
-                ((with-handlers ((tcp-eof? 
+                ((with-handlers ((msgr-eof? 
                                   (compose (handler #f)
                                            (lambda (e)
                                              (set! draw (lambda (w) dis))
                                              (pdraw)
                                              (lambda () e)))))
                    ;; --- "the universe disconnected" should come from here ---
-                   (define msg (tcp-receive in))
+                   (define msg ((msgr-receive messenger) in))
                    (cond
                      [(sexp? msg) (prec msg) RECEIVE] ;; break loop if EOF
                      [else (error 'RECEIVE "sexp expected, received: ~e" msg)])))))))
@@ -119,14 +119,14 @@
           ;; try to register with the server n times 
           (let try ([n TRIES])
             (printf "trying to register with ~a ...\n" register)
-            (with-handlers ((tcp-eof? (lambda (x) (printf FMTcom register)))
-                            (exn:fail:network? 
+            (with-handlers ((msgr-eof? (lambda (x) (printf FMTcom register)))
+                            ((msgr-exn:create messenger)
                              (lambda (x)
                                (if (= n 1) 
                                    (printf FMTtry register TRIES)
                                    (begin (sleep PAUSE) (try (- n 1)))))))
-              (define-values (in out) (tcp-connect register port))
-              (tcp-register in out name)
+              (define-values (in out) ((msgr-connector messenger) register port))
+              (msgr-register messenger in out name)
               (printf "... successfully registered and ready to receive\n")
               (set! *out* out)
               (thread (RECEIVE in))))))
@@ -135,7 +135,7 @@
         (when *out*
           (check-result 'send sexp? "Sexp expected; given ~e\n" msg)
           (with-handlers ([exn:fail:network? (lambda (e) (set! *out* #f))])
-            (tcp-send *out* msg))))
+            ((msgr-send messenger) *out* msg))))
       
       ;; -----------------------------------------------------------------------
       (field

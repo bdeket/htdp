@@ -4,7 +4,8 @@
          racket/list
          racket/bool
          racket/match
-         htdp/error)
+         htdp/error
+         racket/tcp)
 
 (provide (all-defined-out))
 
@@ -114,44 +115,77 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; exchange one-line messages between worlds and the server
 
-(define tcp-eof (gensym 'tcp-eof))
+(struct protocol (send    ;; OutPort Sexp -> Void
+                  receive ;; InPort -> Sexp
+                  ))
+(define (make-protocol send receive)
+  (protocol (λ (out msg) (send msg out) (flush-output out))
+            (λ (in) (with-handlers ([exn? (lambda (x) (raise msgr-eof))])
+                      (define ans (receive in))
+                      (if (eof-object? ans)
+                          (raise msgr-eof)
+                          ans)))))
+(struct msgr (exn:create ;; Any -> Boolean (check thrown exemption)
+              creator    ;; Number -> A
+              eventor    ;; A -> (Event (List In Out))
+              connector  ;; Host Port -> (Values In Out)
+              protocol   ;; protocol?
+              ))
+
+(define (make-tcp-msgr [max-wait 4] [reuse? #t] [hostname #f]
+                       #:protocol [protocol default-protocol])
+  (msgr exn:fail:network?
+        (λ (port) (tcp-listen port max-wait reuse? hostname))
+        tcp-accept-evt
+        (λ (register port) (tcp-connect register port))
+        protocol))
+
+
+(define msgr-eof (gensym 'msgr-eof))
 
 ;; Any -> Boolean 
-(define (tcp-eof? a) (eq? tcp-eof a))
+(define (msgr-eof? a) (eq? msgr-eof a))
 
 ;; OutPort Sexp -> Void
-(define (tcp-send out msg)
+(define (default-send out msg)
   (write msg out)
   (newline out)
   (flush-output out))
 
 ;; InPort -> Sexp
-(define (tcp-receive in)
-  (with-handlers ((exn? (lambda (x) (raise tcp-eof))))
+(define (default-receive in)
+  (with-handlers ((exn? (lambda (x) (raise msgr-eof))))
     (define x (read in))
     (if (eof-object? x) 
-        (raise tcp-eof)
+        (raise msgr-eof)
         (begin
           (read-line in) ;; read the newline 
           x))))
 
-;; InPort OutPort (X -> Y) -> (U Y Void)
+(define default-protocol (protocol default-send default-receive))
+(define default-msgr (make-tcp-msgr))
+
+(define (msgr-send MSGR) (protocol-send (msgr-protocol MSGR)))
+(define (msgr-receive MSGR) (protocol-receive (msgr-protocol MSGR)))
+
+;; msgr? InPort OutPort (X -> Y) -> (U Y Void)
 ;; process a registration from a potential client, invoke k on name if it is okay
-(define (tcp-process-registration in out k)
-  (define next (tcp-receive in))
+(define (msgr-process-registration MSGR in out k)
+  (define next ((msgr-receive MSGR) in))
+  (println next)
   (match next
     [`(REGISTER ((name ,name)))
-     (tcp-send out '(OKAY))
+     ((msgr-send MSGR) out '(OKAY))
      (k name)]))
   
-;; InPort OutPort (U #f String) -> Void 
+;; msgr? InPort OutPort (U #f String) -> Void 
 ;; register with the server, send the given name or make up a symbol 
-(define (tcp-register in out name)
+(define (msgr-register MSGR in out name)
   (define msg `(REGISTER ((name ,(if name name (gensym 'world))))))
-  (tcp-send out msg)
-  (define ackn (tcp-receive in))
+  ((msgr-send MSGR) out msg)
+  (define ackn ((msgr-receive MSGR) in))
   (unless (equal? ackn '(OKAY))
-    (raise tcp-eof)))
+    (raise msgr-eof)))
 
 ;                                                   
 ;                                                   

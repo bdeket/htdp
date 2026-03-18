@@ -60,6 +60,7 @@
        on-new            ;; Universe World -> Result
        on-msg            ;; Universe World Message -> Result
        port              ;; Number
+       messenger         ;; msgr?
        ;; tick              ;; Universe -> Result
        (state #f)        ;; Boolean 
        (on-disconnect    ;; Universe World -> Result
@@ -115,7 +116,7 @@
                     (if (memq w iworlds)
                         (with-handlers ((exn:fail? (lambda (e) (kill w "broadcast failed to ~a"))))
                           (send gui log "universe --> ~a:\n~a\n" n p)
-                          (iworld-send w p))
+                          (iworld-send messenger w p))
                         (send gui log "~s not on list" n)))
                   lm))
       
@@ -163,28 +164,28 @@
         (parameterize ([current-custodian the-custodian])
           (define (loop)
             (apply sync 
-                   (handle-evt (tcp-accept-evt tcp-listener) add-iworld)
+                   (handle-evt ((msgr-eventor messenger) msgr-listener) add-iworld)
                    (map (lambda (p) (handle-evt (iworld-in p) (process-message p))) iworlds))
             (loop))
           ;;; WHERE
           (define listener-msg
             "the universe could not be created (possibly because another universe is running)")
-          (define tcp-listener 
-            (with-handlers ((exn:fail:network? (lambda (x) (stop! x) (tp-error 'start listener-msg))))
-              (tcp-listen port 4 #t)))
+          (define msgr-listener 
+            (with-handlers (((msgr-exn:create messenger) (lambda (x) (stop! x) (tp-error 'start listener-msg))))
+              ((msgr-creator messenger) port)))
           ;; [list IPort OPort] -> Void 
           (define (add-iworld in-out)
             (define in (first in-out))
             (define out (second in-out))
             ;; is it possible to kill the server with lots of bad connections?
-            (with-handlers ((tcp-eof? (lambda _ (void)))
+            (with-handlers ((msgr-eof? (lambda _ (void)))
                             (exn? (lambda (e) (printf "process registration failed!\n"))))
-              (tcp-process-registration in out (lambda (info) (pnew (create-iworld in out info))))))
+              (msgr-process-registration messenger in out (lambda (info) (pnew (create-iworld in out info))))))
           ;; IWorld -> [IPort -> Void]
           (define (process-message p)
             (lambda (in)
-              (with-handlers ((tcp-eof? (lambda (e) (pdisconnect p))))
-                (pmsg p (tcp-receive in)))))
+              (with-handlers ((msgr-eof? (lambda (e) (pdisconnect p))))
+                (pmsg p ((msgr-receive messenger) in)))))
           ;; --- go universe go ---
           (set! iworlds '())
           (send gui show #t)
@@ -257,9 +258,9 @@
     (close-output-port (iworld-out p))
     (close-input-port (iworld-in p))))
 
-;; Player S-exp -> Void
-(define (iworld-send p sexp)
-  (tcp-send (iworld-out p) sexp))
+;; msgr? Player S-exp -> Void
+(define (iworld-send MSGR p sexp)
+  ((msgr-send MSGR) (iworld-out p) sexp))
 
 
 ;                          

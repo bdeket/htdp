@@ -27,7 +27,7 @@
          ;; 
          (only-in "private/launch-many-worlds.rkt" launch-many-worlds launch-many-worlds/proc)
          (only-in "private/stop.rkt" make-stop-the-world)
-         (only-in "private/check-aux.rkt" sexp? SQPORT)
+         (only-in "private/check-aux.rkt" sexp? SQPORT msgr? default-msgr)
          (only-in "private/pad.rkt" pad-event? pad=?)
          htdp/error
          (rename-in lang/prim (first-order->higher-order f2h)))
@@ -70,7 +70,8 @@
   [check-with DEFAULT #'True (function-with-arity 1)]
   ;; Natural
   ;; -- port: specify the port to use
-  [port DEFAULT #'SQPORT (expr-with-check port> "expected a port number")])
+  [port DEFAULT #'SQPORT (expr-with-check port> "expected a port number")]
+  [messenger DEFAULT #'default-msgr (expr-with-check (λ (x y) (check-arg x (msgr? y) "msgr?" "first" y) y) "expected a msgr?")])
 
 (require racket/stxparam-exptime)
 
